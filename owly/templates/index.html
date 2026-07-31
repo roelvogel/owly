@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Owly Dashboard</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <header>
+    <h1>Owly</h1>
+    <p class="subtitle">E-Ink News &amp; X Curation</p>
+  </header>
+
+  {% if request.query_params.get('msg') == 'run_started' %}
+  <p class="notice">Edition run started in the background. Refresh in a few minutes.</p>
+  {% elif request.query_params.get('msg') == 'run_busy' %}
+  <p class="notice">A run is already in progress.</p>
+  {% endif %}
+
+  <section>
+    <h2>Run Now</h2>
+    <form action="/run" method="post" class="inline-forms">
+      <button type="submit" name="edition" value="">Auto (morning/evening)</button>
+      <button type="submit" name="edition" value="morning">Morning</button>
+      <button type="submit" name="edition" value="evening">Evening</button>
+    </form>
+    {% if run_in_progress %}
+    <p class="muted">Run in progress...</p>
+    {% endif %}
+  </section>
+
+  <section>
+    <h2>Sources</h2>
+    <form action="/sources/add" method="post" class="source-form">
+      <select name="source_type" required>
+        <option value="rss">RSS Feed</option>
+        <option value="stock">Stock Ticker</option>
+        <option value="topic">Topic (X search)</option>
+      </select>
+      <input type="text" name="value" placeholder="URL, NVDA, or topic" required>
+      <input type="text" name="label" placeholder="Label (optional)">
+      <label class="checkbox-label">
+        <input type="checkbox" name="use_morss" value="1"> Use morss.it
+      </label>
+      <button type="submit">Add</button>
+    </form>
+
+    <h3>RSS Feeds</h3>
+    <ul class="source-list">
+      {% for s in sources if s.type == 'rss' %}
+      <li>
+        <span class="{% if not s.enabled %}disabled{% endif %}">{{ s.label or s.value }}</span>
+        <span class="muted">{{ s.value }}</span>
+        <form action="/sources/{{ s.id }}/toggle" method="post" class="inline-form">
+          <input type="hidden" name="enabled" value="{{ 0 if s.enabled else 1 }}">
+          <button type="submit">{{ 'Disable' if s.enabled else 'Enable' }}</button>
+        </form>
+        <form action="/sources/{{ s.id }}/delete" method="post" class="inline-form" onsubmit="return confirm('Delete this source?');">
+          <button type="submit">Delete</button>
+        </form>
+      </li>
+      {% else %}
+      <li class="muted">No RSS feeds configured.</li>
+      {% endfor %}
+    </ul>
+
+    <h3>Stocks</h3>
+    <ul class="source-list">
+      {% for s in sources if s.type == 'stock' %}
+      <li>
+        <span class="{% if not s.enabled %}disabled{% endif %}">{{ s.label or s.value }}</span>
+        <span class="muted">${{ s.value }}</span>
+        <form action="/sources/{{ s.id }}/toggle" method="post" class="inline-form">
+          <input type="hidden" name="enabled" value="{{ 0 if s.enabled else 1 }}">
+          <button type="submit">{{ 'Disable' if s.enabled else 'Enable' }}</button>
+        </form>
+        <form action="/sources/{{ s.id }}/delete" method="post" class="inline-form" onsubmit="return confirm('Delete this source?');">
+          <button type="submit">Delete</button>
+        </form>
+      </li>
+      {% else %}
+      <li class="muted">No stocks configured.</li>
+      {% endfor %}
+    </ul>
+
+    <h3>Topics</h3>
+    <ul class="source-list">
+      {% for s in sources if s.type == 'topic' %}
+      <li>
+        <span class="{% if not s.enabled %}disabled{% endif %}">{{ s.label or s.value }}</span>
+        <form action="/sources/{{ s.id }}/toggle" method="post" class="inline-form">
+          <input type="hidden" name="enabled" value="{{ 0 if s.enabled else 1 }}">
+          <button type="submit">{{ 'Disable' if s.enabled else 'Enable' }}</button>
+        </form>
+        <form action="/sources/{{ s.id }}/delete" method="post" class="inline-form" onsubmit="return confirm('Delete this source?');">
+          <button type="submit">Delete</button>
+        </form>
+      </li>
+      {% else %}
+      <li class="muted">No topics configured.</li>
+      {% endfor %}
+    </ul>
+  </section>
+
+  <section>
+    <h2>Editions</h2>
+    <ul class="edition-list">
+      {% for e in editions %}
+      <li>
+        <a href="/editions/{{ e.file_path | basename }}">{{ e.title }}</a>
+        <span class="muted">{{ e.created_at[:16] }}</span>
+      </li>
+      {% else %}
+      <li class="muted">No editions yet. Run an edition to generate one.</li>
+      {% endfor %}
+    </ul>
+  </section>
+
+  <section>
+    <h2>Run History</h2>
+    <table>
+      <thead>
+        <tr>
+          <th>Slot</th>
+          <th>Started</th>
+          <th>Status</th>
+          <th>Tokens (in/out)</th>
+          <th>Duration</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for r in runs %}
+        <tr class="status-{{ r.status }}">
+          <td>{{ r.edition_slot }}</td>
+          <td>{{ r.started_at[:16] }}</td>
+          <td>{{ r.status }}{% if r.error %} — {{ r.error[:80] }}{% endif %}</td>
+          <td>{{ r.input_tokens }} / {{ r.output_tokens }}</td>
+          <td>{{ (r.duration_ms / 1000)|round(1) }}s</td>
+        </tr>
+        {% else %}
+        <tr><td colspan="5" class="muted">No runs yet.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </section>
+</body>
+</html>
