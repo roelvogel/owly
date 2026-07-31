@@ -1,39 +1,59 @@
 # Owly
 
-**AI-powered news digest for e-ink readers.**
+### Your topics. No feed. No phone.
 
-**Repository:** [github.com/roelvogel/owly](https://github.com/roelvogel/owly)
+Owly is a personal news digest for people who want to stay sharp on **tech**, **stocks**, or a niche they actually care about — without opening social media or living on their phone.
 
-Owly is a personal news curation service that turns RSS feeds and real-time X (Twitter) into clean Markdown digests — designed for e-ink tablets like the Boox Note Air. It uses Grok (`x_search`) to find signal, skip noise, and write short, readable summaries twice a day.
+You name the beat. Owly gathers it from RSS and live X, Grok keeps only the signal, and you get a clean Markdown edition — twice a day, then you’re done. Read it on an e-ink tablet. Close the app. Get on with your life.
 
-Pair it with the [Owly Android client](https://github.com/roelvogel/owly-android) to trigger runs and read editions over Tailscale from your tablet.
+**[github.com/roelvogel/owly](https://github.com/roelvogel/owly)** · **Tablet app:** [Owly Android](https://github.com/roelvogel/owly-android)
 
-## What it does
+---
 
-- **AI news digest** — Grok picks the highest-signal stories from your feeds and topics
-- **Full-text RSS** — downloads article bodies (not just headlines) with `trafilatura`
-- **Live X search** — pulls recent posts via xAI’s native `x_search` tool
-- **E-ink Markdown** — large headings, short paragraphs, no tables or clutter
-- **Optional stocks edition** — ticker digests from X (configured locally; not in the repo)
-- **Local dashboard** — manage sources, browse editions, run on demand
-- **JSON API** — authenticated endpoints for remote clients (VPN / Tailscale)
+## Why Owly
+
+Following markets, semiconductors, or a research niche usually means the same trap: Twitter, Bloomberg tabs, push alerts, and an hour you didn’t mean to spend.
+
+Owly flips that.
+
+| The usual way | With Owly |
+|---------------|-----------|
+| Infinite feeds & “for you” noise | Only the topics *you* configure |
+| Phone in hand all day | Optional tablet / e-ink reading |
+| Headlines fighting for attention | Short, curated Markdown digests |
+| Always-on notifications | Morning + evening. Then silence |
+
+Built for people who want **specificity**, not another timeline.
+
+## Who it’s for
+
+- Tracking a handful of tickers without refreshing X all day  
+- Following AI, chips, or an industry niche without doomscrolling  
+- Reading news on a Boox (or similar) instead of a phone  
+- Anyone who wants to stay informed — and stay out of the feed  
+
+## What you get
+
+| Edition | What it covers |
+|---------|----------------|
+| **Main digest** | Top stories from your RSS feeds + X topics, curated by Grok |
+| **Stocks** *(optional)* | Per-ticker signal from X — configured locally, never shipped in the repo |
+
+Under the hood: full-text RSS (not just headlines), live X search via Grok’s `x_search`, SQLite dedupe so repeats don’t sneak back in, and a local dashboard to manage sources and trigger runs.
 
 ## How it works
 
 ```
-RSS feeds + X topics  →  Grok curation  →  Markdown editions
+Your feeds & topics  →  Grok curation  →  Markdown digest
                               ↓
-                     SQLite (dedupe / history)
+                     Read on e-ink / tablet
 ```
 
-Runs on a schedule (e.g. 07:00 and 21:00) or whenever you hit **Run** in the dashboard or Android app. Deduplication means you don’t see the same URL twice.
-
-## Requirements
-
-- Python 3.11+ recommended (3.9+ may work)
-- An [xAI API key](https://console.x.ai)
+Schedule it (e.g. 07:00 and 21:00) or hit **Run** when you want. Pair with the [Android client](https://github.com/roelvogel/owly-android) over Tailscale — trigger and read from your tablet, still without touching social apps.
 
 ## Quick start
+
+**Requirements:** Python 3.11+ and an [xAI API key](https://console.x.ai).
 
 ```powershell
 python -m venv .venv
@@ -43,102 +63,75 @@ copy .env.example .env
 # Edit .env → set XAI_API_KEY
 ```
 
-Generate a digest:
-
 ```powershell
-python -m owly.run
+python -m owly.run                  # generate a digest
 python -m owly.run --edition morning
-python -m owly.run --edition evening
-python -m owly.run --dry-run   # RSS only, no API calls
+python -m owly.dashboard            # open http://localhost:8741
+.\scripts\register_tasks.ps1        # schedule 07:00 / 21:00 on Windows
 ```
 
-Start the dashboard:
-
-```powershell
-python -m owly.dashboard
-```
-
-Open `http://localhost:8741`.
-
-Schedule twice-daily runs on Windows:
-
-```powershell
-.\scripts\register_tasks.ps1
-```
+Add RSS feeds, topics, and (optionally) stock tickers in the dashboard. Your watchlist and digests stay on your machine.
 
 ## Configuration
-
-Copy `.env.example` to `.env`:
 
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `XAI_API_KEY` | — | xAI API key |
 | `XAI_MODEL` | `grok-4.5` | Model name |
-| `OUTPUT_DIR` | `editions` | Where Markdown digests are written |
-| `INGESTION_HOURS` | `12` | Lookback window for RSS and X |
+| `OUTPUT_DIR` | `editions` | Where digests are written |
+| `INGESTION_HOURS` | `12` | Lookback for RSS and X |
 | `DASHBOARD_PORT` | `8741` | Dashboard / API port |
-| `OWLY_API_KEY` | — | Shared secret for `/api/*` (optional) |
+| `OWLY_API_KEY` | — | Secret for `/api/*` (optional) |
 
-## Android client
+## Read on a tablet
 
-The companion app for Boox / Android tablets lives in a separate repo:
+The companion app for Boox / Android:
 
 **[github.com/roelvogel/owly-android](https://github.com/roelvogel/owly-android)**
 
-It talks to this server’s JSON API over Tailscale: trigger morning/evening runs, list editions, and read Markdown on device.
+Trigger runs, list editions, read Markdown — over Tailscale to your home PC. Built for a ~10" e-ink layout: big type, high contrast, no clutter.
 
 ## JSON API
 
-Set `OWLY_API_KEY` in `.env`. All `/api/*` routes require `X-Api-Key` (or `Authorization: Bearer …`).
+Set `OWLY_API_KEY` in `.env`. Routes require `X-Api-Key` (or `Authorization: Bearer …`).
 
 | Method | Path | Description |
 |--------|------|-------------|
-| `GET` | `/api/status` | Run in progress + latest run |
-| `POST` | `/api/run` | Start a run (`{"edition": "morning" \| "evening" \| null}`) |
-| `GET` | `/api/editions` | List digests (newest first) |
-| `GET` | `/api/editions/{filename}` | Raw Markdown for one edition |
+| `GET` | `/api/status` | Run status + latest run |
+| `POST` | `/api/run` | Start a run |
+| `GET` | `/api/editions` | List digests |
+| `GET` | `/api/editions/{filename}` | Raw Markdown |
 
 ```powershell
 curl -H "X-Api-Key: your-secret" http://localhost:8741/api/status
-curl -H "X-Api-Key: your-secret" http://localhost:8741/api/editions
-curl -X POST -H "X-Api-Key: your-secret" -H "Content-Type: application/json" `
-  -d "{\"edition\":\"morning\"}" http://localhost:8741/api/run
 ```
 
-## Private data (not in this repo)
+## Private by design
 
-These stay on your machine and are gitignored:
+Gitignored and never published:
 
-- `.env` — API keys and secrets
-- `data/` — SQLite (feeds, topics, **stock tickers**, run history)
-- `editions/` — generated Markdown digests (including stocks)
+- `.env` — keys and secrets  
+- `data/` — your feeds, topics, **stock tickers**, history  
+- `editions/` — generated digests  
 
-Add stock tickers yourself in the dashboard. No default watchlist ships with the project.
+No default stock watchlist. Your portfolio and niches stay yours.
 
 ## Project layout
 
 ```
 owly/
-  config.py      # Settings from .env
-  db.py          # SQLite persistence
-  ingest.py      # RSS + full-text extraction
-  grok.py        # xAI / Grok client + x_search
-  render.py      # E-ink Markdown renderer
-  run.py         # CLI entrypoint
-  dashboard.py   # FastAPI dashboard
-  api.py         # JSON API for remote clients
-  templates/     # Dashboard HTML
-  static/        # E-ink CSS
-scripts/
-  register_tasks.ps1
-editions/        # Generated digests (gitignored)
-data/            # SQLite database (gitignored)
+  config.py · db.py · ingest.py · grok.py · render.py
+  run.py · dashboard.py · api.py
+  templates/ · static/
+scripts/register_tasks.ps1
+editions/   # gitignored
+data/       # gitignored
 ```
-
-## E-ink formatting
-
-Digests use strict Markdown: `#` title, `##` per item (or `##` ticker / `###` item for stocks), short paragraphs, no tables or emojis. Source URLs are tracked internally but not printed in the edition.
 
 ## License
 
 MIT — see [LICENSE](LICENSE).
+
+---
+
+*Specific topics. Zero distraction. Phone optional.*
