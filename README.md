@@ -20,7 +20,7 @@ Owly flips that.
 |---------------|-----------|
 | Infinite feeds & “for you” noise | Only the topics *you* configure |
 | Phone in hand all day | Optional tablet / e-ink reading |
-| Headlines fighting for attention | Short, curated Markdown digests |
+| Headlines fighting for attention | Full main digest + compact stock editions |
 | Always-on notifications | Morning + evening. Then silence |
 
 Built for people who want **specificity**, not another timeline.
@@ -36,10 +36,10 @@ Built for people who want **specificity**, not another timeline.
 
 | Edition | What it covers |
 |---------|----------------|
-| **Main digest** | Top stories from your RSS feeds + X topics, curated by Grok |
-| **Stocks** *(optional)* | Per-ticker signal from X — configured locally, never shipped in the repo |
+| **Main digest** | 6–12 rewritten articles from your RSS feeds, grounded X posts, and a headline TOC |
+| **Stocks** *(optional)* | Per-ticker signal from X plus matching RSS (up to a paragraph per item) — configured locally, never shipped in the repo |
 
-Under the hood: full-text RSS (not just headlines), live X search via Grok’s `x_search`, SQLite dedupe so repeats don’t sneak back in, and a local dashboard to manage sources and trigger runs.
+Under the hood: full-text RSS (not just headlines), live X search via Grok’s `x_search`, web search to ground social-only stories, SQLite dedupe so published items don’t sneak back in, and a local dashboard to manage sources and trigger runs.
 
 ## How it works
 
@@ -77,9 +77,13 @@ Add RSS feeds, topics, and (optionally) stock tickers in the dashboard. Your wat
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `XAI_API_KEY` | — | xAI API key |
-| `XAI_MODEL` | `grok-4.5` | Model name |
+| `XAI_MODEL` | `grok-4.6` | Model name |
+| `MAX_OUTPUT_TOKENS` | `4096` | Token cap for stock / default Grok calls |
+| `MAX_MAIN_OUTPUT_TOKENS` | `16384` | Token cap for the main digest |
 | `OUTPUT_DIR` | `editions` | Where digests are written |
 | `INGESTION_HOURS` | `12` | Lookback for RSS and X |
+| `STOCK_MAX_WORKERS` | `3` | Parallel stock digest calls |
+| `DASHBOARD_HOST` | `0.0.0.0` | Bind address (`127.0.0.1` for local-only) |
 | `DASHBOARD_PORT` | `8741` | Dashboard / API port |
 | `OWLY_API_KEY` | — | Secret for `/api/*` (optional) |
 
@@ -121,7 +125,7 @@ No default stock watchlist. Your portfolio and niches stay yours.
 ```
 owly/
   config.py · db.py · ingest.py · grok.py · render.py
-  run.py · dashboard.py · api.py
+  run.py · run_state.py · dashboard.py · api.py
   templates/ · static/
 scripts/register_tasks.ps1
 editions/   # gitignored
