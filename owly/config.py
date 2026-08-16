@@ -17,15 +17,18 @@ class Settings(BaseSettings):
     )
 
     xai_api_key: str = ""
-    xai_model: str = "grok-4.5"
+    xai_model: str = "grok-4.6"
     xai_base_url: str = "https://api.x.ai/v1"
 
     output_dir: Path = PROJECT_ROOT / "editions"
     data_dir: Path = PROJECT_ROOT / "data"
 
     max_output_tokens: int = 4096
+    max_main_output_tokens: int = 16384
     ingestion_hours: int = 12
+    stock_max_workers: int = 3
 
+    # 0.0.0.0 is required for Tailscale / LAN tablet access; use 127.0.0.1 for local-only.
     dashboard_host: str = "0.0.0.0"
     dashboard_port: int = 8741
     owly_api_key: str = ""
