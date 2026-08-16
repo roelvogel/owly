@@ -6,11 +6,13 @@ import argparse
 import logging
 import sys
 import time
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from pathlib import Path
 
 from owly.config import get_settings
 from owly.db import (
+    Source,
     add_edition,
     create_run,
     finish_run,
@@ -19,11 +21,18 @@ from owly.db import (
     mark_seen,
     prune_seen_items,
 )
-from owly.dedupe import dedupe_stock_results
+from owly.dedupe import dedupe_digest_items, dedupe_stock_results
 from owly.grok import GrokClient
-from owly.ingest import fetch_all_rss, format_items_for_prompt
-from owly.models import StockDigestResult
+from owly.ingest import (
+    FeedItem,
+    fetch_all_rss,
+    format_items_for_prompt,
+    hydrate_digest_from_rss,
+    items_for_ticker,
+)
+from owly.models import DigestResult, StockDigestResult
 from owly.render import edition_filename, render_combined_stocks_edition, render_main_edition
+from owly.urls import canonicalize_url
 
 logging.basicConfig(
     level=logging.INFO,
@@ -35,6 +44,46 @@ logger = logging.getLogger(__name__)
 def detect_edition_slot(now: datetime | None = None) -> str:
     current = now or datetime.now()
     return "morning" if current.hour < 15 else "evening"
+
+
+def published_sources(
+    digest: DigestResult,
+    stock_digests: list[StockDigestResult],
+) -> list[tuple[str, str | None]]:
+    """URLs that actually appeared in an edition — the only ones that should be marked seen."""
+    rows: list[tuple[str, str | None]] = []
+    for item in digest.items:
+        for url in item.sources:
+            rows.append((url, item.title))
+    for stock_digest in stock_digests:
+        for item in stock_digest.items:
+            for url in item.sources:
+                rows.append((url, item.title))
+    return rows
+
+
+def _log_unselected_rss(digest: DigestResult, rss_items: list[FeedItem]) -> None:
+    selected = {canonicalize_url(url) for item in digest.items for url in item.sources}
+    for item in rss_items:
+        if canonicalize_url(item.url) not in selected:
+            logger.info("RSS not selected this run: %s (%s)", item.title, item.url)
+
+
+def _stock_digest_for_source(
+    grok: GrokClient,
+    stock: Source,
+    rss_items: list[FeedItem],
+) -> tuple[StockDigestResult, int, int]:
+    matches = items_for_ticker(rss_items, stock.value)
+    rss_context = ""
+    if matches:
+        rss_context = format_items_for_prompt(matches, max_chars=12000, excerpt_chars=2000)
+        logger.info("Stock %s: %d matching RSS items", stock.value, len(matches))
+    return grok.generate_stock_digest(
+        stock.value,
+        company_name=stock.label,
+        rss_context=rss_context,
+    )
 
 
 def run_edition(edition_slot: str | None = None, dry_run: bool = False) -> int:
@@ -76,18 +125,26 @@ def run_edition(edition_slot: str | None = None, dry_run: bool = False) -> int:
         rss_context = format_items_for_prompt(rss_items)
 
         digest, in_tok, out_tok = grok.generate_main_digest(rss_context, topics)
+        digest = dedupe_digest_items(digest)
+        digest = hydrate_digest_from_rss(digest, rss_items)
+        _log_unselected_rss(digest, rss_items)
         total_in += in_tok
         total_out += out_tok
 
         stock_digests: list[StockDigestResult] = []
-        for stock in stock_sources:
-            stock_digest, s_in, s_out = grok.generate_stock_digest(
-                stock.value,
-                company_name=stock.label,
-            )
-            total_in += s_in
-            total_out += s_out
-            stock_digests.append(stock_digest)
+        if stock_sources:
+            workers = max(1, min(settings.stock_max_workers, len(stock_sources)))
+            with ThreadPoolExecutor(max_workers=workers) as pool:
+                futures = [
+                    pool.submit(_stock_digest_for_source, grok, stock, rss_items)
+                    for stock in stock_sources
+                ]
+                for stock, future in zip(stock_sources, futures):
+                    stock_digest, s_in, s_out = future.result()
+                    total_in += s_in
+                    total_out += s_out
+                    stock_digests.append(stock_digest)
+                    logger.info("Stock %s: %d items", stock.value, len(stock_digest.items))
 
         stocks_path: Path | None = None
         if stock_sources:
@@ -105,17 +162,7 @@ def run_edition(edition_slot: str | None = None, dry_run: bool = False) -> int:
         main_path.write_text(main_md, encoding="utf-8")
         logger.info("Wrote main edition: %s", main_path)
 
-        seen: list[tuple[str, str | None]] = []
-        for item in rss_items:
-            seen.append((item.url, item.title))
-        for digest_item in digest.items:
-            for url in digest_item.sources:
-                seen.append((url, digest_item.title))
-        for stock_digest in stock_digests:
-            for digest_item in stock_digest.items:
-                for url in digest_item.sources:
-                    seen.append((url, digest_item.title))
-
+        seen = published_sources(digest, stock_digests)
         with get_db() as conn:
             mark_seen(conn, seen, run_id=run_id)
             prune_seen_items(conn)
