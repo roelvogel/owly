@@ -11,6 +11,9 @@ from pathlib import Path
 from typing import Generator, Iterable, Optional
 
 from owly.config import get_settings
+from owly.urls import canonicalize_url
+
+_initialized_paths: set[str] = set()
 
 
 def _utcnow() -> str:
@@ -106,13 +109,17 @@ class Edition:
     created_at: str
 
 
-def init_db(db_path: Optional[Path] = None) -> None:
+def init_db(db_path: Optional[Path] = None, force: bool = False) -> None:
     path = db_path or get_settings().db_path
+    key = str(path.resolve()) if path.exists() else str(path)
+    if not force and key in _initialized_paths and path.exists():
+        return
     path.parent.mkdir(parents=True, exist_ok=True)
     with _connect(path) as conn:
         conn.executescript(SCHEMA)
         conn.commit()
         _seed_defaults(conn)
+    _initialized_paths.add(str(path.resolve()))
 
 
 def _seed_defaults(conn: sqlite3.Connection) -> None:
@@ -310,7 +317,8 @@ def list_runs(conn: sqlite3.Connection, limit: int = 20) -> list[Run]:
 
 
 def url_hash(url: str) -> str:
-    return hashlib.sha256(url.strip().encode("utf-8")).hexdigest()
+    canonical = canonicalize_url(url) or url.strip()
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
 def is_seen(conn: sqlite3.Connection, item_url: str) -> bool:
