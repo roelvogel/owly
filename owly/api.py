@@ -10,6 +10,7 @@ from pydantic import BaseModel
 
 from owly.config import get_settings
 from owly.db import Edition, Run, get_db, list_editions, list_runs
+from owly.run_state import is_run_in_progress, start_run
 
 router = APIRouter(prefix="/api", tags=["api"])
 
@@ -104,12 +105,10 @@ async def verify_api_key(
 
 @router.get("/status", response_model=StatusResponse)
 def api_status(_: None = Depends(verify_api_key)) -> StatusResponse:
-    from owly.dashboard import _run_in_progress
-
     with get_db() as conn:
         runs = list_runs(conn, limit=1)
     latest = _run_to_summary(runs[0]) if runs else None
-    return StatusResponse(run_in_progress=_run_in_progress, latest_run=latest)
+    return StatusResponse(run_in_progress=is_run_in_progress(), latest_run=latest)
 
 
 @router.post("/run", response_model=RunResponse)
@@ -117,8 +116,6 @@ def api_run(
     body: RunRequest,
     _: None = Depends(verify_api_key),
 ) -> RunResponse:
-    from owly.dashboard import start_run
-
     status = start_run(body.edition)
     return RunResponse(ok=True, status=status)
 

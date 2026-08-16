@@ -10,7 +10,7 @@ from unittest.mock import patch
 from fastapi.testclient import TestClient
 
 from owly.config import Settings
-from owly import dashboard
+from owly import run_state
 from owly.dashboard import app
 from owly.db import init_db
 
@@ -35,8 +35,7 @@ class ApiTest(unittest.TestCase):
         import owly.config as config_mod
 
         config_mod._settings = self.settings
-        with dashboard._run_lock:
-            dashboard._run_in_progress = False
+        run_state.reset_for_tests()
         self.client = TestClient(app)
 
     def tearDown(self) -> None:
@@ -44,8 +43,7 @@ class ApiTest(unittest.TestCase):
         import owly.config as config_mod
 
         config_mod._settings = None
-        with dashboard._run_lock:
-            dashboard._run_in_progress = False
+        run_state.reset_for_tests()
 
     def test_status_requires_api_key(self) -> None:
         response = self.client.get("/api/status")
@@ -71,7 +69,7 @@ class ApiTest(unittest.TestCase):
         self.assertEqual(response.json()["editions"], [])
 
     def test_run_returns_started(self) -> None:
-        with patch("owly.dashboard.start_run", return_value="started"):
+        with patch("owly.api.start_run", return_value="started"):
             response = self.client.post(
                 "/api/run",
                 headers={"X-Api-Key": "test-api-key"},

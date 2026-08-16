@@ -3,9 +3,7 @@
 from __future__ import annotations
 
 import logging
-import subprocess
-import sys
-import threading
+from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Optional
 
@@ -17,7 +15,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
 from owly.api import router as api_router
-from owly.config import PROJECT_ROOT, get_settings
+from owly.config import get_settings
 from owly.db import (
     add_source,
     delete_source,
@@ -28,22 +26,26 @@ from owly.db import (
     list_sources,
     toggle_source,
 )
-
-logger = logging.getLogger(__name__)
+from owly.run_state import is_run_in_progress, start_run
 
 TEMPLATES_DIR = Path(__file__).parent / "templates"
 STATIC_DIR = Path(__file__).parent / "static"
 
-app = FastAPI(title="Owly Dashboard", version="0.1.0")
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    init_db()
+    get_settings().ensure_dirs()
+    yield
+
+
+app = FastAPI(title="Owly Dashboard", version="0.1.0", lifespan=lifespan)
 app.include_router(api_router)
 templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
 templates.env.filters["basename"] = lambda p: Path(p).name
 
 if STATIC_DIR.exists():
     app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
-
-_run_lock = threading.Lock()
-_run_in_progress = False
 
 
 def _md_to_html(text: str) -> str:
@@ -52,12 +54,6 @@ def _md_to_html(text: str) -> str:
         extensions=["extra", "sane_lists"],
         output_format="html5",
     )
-
-
-@app.on_event("startup")
-def startup() -> None:
-    init_db()
-    get_settings().ensure_dirs()
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -73,7 +69,7 @@ def home(request: Request):
             "editions": editions,
             "runs": runs,
             "sources": sources,
-            "run_in_progress": _run_in_progress,
+            "run_in_progress": is_run_in_progress(),
         },
     )
 
@@ -126,34 +122,6 @@ def toggle_source_route(source_id: int, enabled: str = Form(...)):
     with get_db() as conn:
         toggle_source(conn, source_id, enabled == "1")
     return RedirectResponse(url="/", status_code=303)
-
-
-def _run_edition_background(edition_slot: Optional[str] = None) -> None:
-    global _run_in_progress
-    try:
-        cmd = [sys.executable, "-m", "owly.run"]
-        if edition_slot:
-            cmd.extend(["--edition", edition_slot])
-        subprocess.run(cmd, cwd=str(PROJECT_ROOT), check=False)
-    finally:
-        with _run_lock:
-            _run_in_progress = False
-
-
-def start_run(edition_slot: Optional[str] = None) -> str:
-    """Start a background edition run. Returns 'started' or 'busy'."""
-    global _run_in_progress
-    with _run_lock:
-        if _run_in_progress:
-            return "busy"
-        _run_in_progress = True
-    thread = threading.Thread(
-        target=_run_edition_background,
-        kwargs={"edition_slot": edition_slot},
-        daemon=True,
-    )
-    thread.start()
-    return "started"
 
 
 @app.post("/run")
