@@ -12,7 +12,7 @@ from datetime import datetime, timedelta, timezone
 from difflib import SequenceMatcher
 from email.utils import parsedate_to_datetime
 from typing import Iterator, Optional
-from urllib.parse import quote
+from urllib.parse import quote, urlparse
 
 import feedparser
 import httpx
@@ -35,6 +35,12 @@ _CLUSTER_SIMILARITY = 0.72
 _HYDRATE_KEEP_CHARS = 400
 _HYDRATE_FALLBACK_MAX = 900
 _USER_AGENT = "Owly/0.1 (+local news curator)"
+_CONSENT_HOSTS = (
+    "myprivacy.dpgmedia.nl",
+    "privacy.dpgmedia.nl",
+    "consent.dpgmedia.nl",
+)
+_MIN_PACK_BODY_CHARS = 400
 
 
 @dataclass
@@ -116,6 +122,25 @@ def _http_client(timeout: float = 30.0) -> Iterator[httpx.Client]:
         client.close()
 
 
+def _is_consent_wall(url: str, html: str = "") -> bool:
+    """True when a fetch landed on a cookie/consent interstitial (e.g. DPG/Tweakers)."""
+    raw = (url or "").lower()
+    parsed = urlparse(url or "")
+    host = (parsed.netloc or "").lower()
+    path = (parsed.path or "").lower()
+    if any(marker == host or host.endswith("." + marker) or marker in host for marker in _CONSENT_HOSTS):
+        return True
+    if "privacygate" in path or "privacygate" in raw:
+        return True
+    if "dpgmedia" in host and "consent" in path:
+        return True
+    snippet = (html or "")[:2500].lower()
+    # CMP landing pages, not news articles that merely link to the privacy host in a footer.
+    if "callbackurl=" in snippet and "sitekey=" in snippet and "myprivacy.dpgmedia.nl" in snippet:
+        return True
+    return False
+
+
 def _fetch_url(
     url: str,
     timeout: float = 30.0,
@@ -130,7 +155,12 @@ def _fetch_url(
     try:
         response = http.get(url, timeout=timeout)
         response.raise_for_status()
-        return response.text
+        html = response.text
+        final_url = str(response.url)
+        if _is_consent_wall(final_url, html):
+            logger.warning("Consent wall blocked fetch: %s -> %s", url, final_url)
+            return None
+        return html
     except httpx.HTTPError as exc:
         logger.warning("Failed to fetch %s: %s", url, exc)
         return None
@@ -180,8 +210,12 @@ def _parse_feed_content(content: str, feed_url: str, feed_label: str) -> list[Fe
     return items
 
 
+def _needs_article_fetch(item: FeedItem) -> bool:
+    return len((item.full_text or "").strip()) < _SKIP_FETCH_IF_CHARS
+
+
 def _enrich_full_text(item: FeedItem, client: Optional[httpx.Client] = None) -> FeedItem:
-    if item.full_text and len(item.full_text) >= _SKIP_FETCH_IF_CHARS:
+    if not _needs_article_fetch(item):
         return item
     html = _fetch_url(item.url, client=client)
     if not html:
@@ -237,10 +271,17 @@ def _enrich_items(items: list[FeedItem], client: Optional[httpx.Client]) -> list
     if not items:
         return []
     if len(items) == 1:
-        return [_enrich_full_text(items[0], client)]
-    workers = min(_ENRICH_WORKERS, len(items))
-    with ThreadPoolExecutor(max_workers=workers) as pool:
-        return list(pool.map(lambda item: _enrich_full_text(item, client), items))
+        enriched = [_enrich_full_text(items[0], client)]
+    else:
+        workers = min(_ENRICH_WORKERS, len(items))
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            enriched = list(pool.map(lambda item: _enrich_full_text(item, client), items))
+    # Parallel first hits often land on a shared consent wall before cookies exist.
+    # Retry remaining thin items sequentially on the same client.
+    for item in enriched:
+        if _needs_article_fetch(item):
+            _enrich_full_text(item, client)
+    return enriched
 
 
 def fetch_all_rss(skip_seen: bool = True) -> list[FeedItem]:
@@ -263,12 +304,31 @@ def fetch_all_rss(skip_seen: bool = True) -> list[FeedItem]:
     return all_items
 
 
-def items_for_ticker(items: list[FeedItem], ticker: str) -> list[FeedItem]:
-    needle = ticker.upper().lstrip("$")
+def items_for_ticker(
+    items: list[FeedItem],
+    ticker: str,
+    company: str = "",
+) -> list[FeedItem]:
+    """Match $TICKER / whole-word ticker / company name — not substrings like MU in 'must'."""
+    symbol = ticker.upper().lstrip("$")
+    if not symbol:
+        return []
+    escaped = re.escape(symbol)
+    ticker_pattern = re.compile(
+        rf"(?<![A-Za-z0-9])(?:\${escaped}|{escaped})(?![A-Za-z0-9])",
+        re.IGNORECASE,
+    )
+    label = (company or "").strip()
+    company_pattern = (
+        re.compile(rf"\b{re.escape(label)}\b", re.IGNORECASE) if label else None
+    )
     matches: list[FeedItem] = []
     for item in items:
-        blob = f"{item.title} {item.summary} {item.full_text}".upper()
-        if needle in blob or f"${needle}" in blob:
+        blob = f"{item.title} {item.summary} {item.full_text}"
+        if ticker_pattern.search(blob):
+            matches.append(item)
+            continue
+        if company_pattern is not None and company_pattern.search(blob):
             matches.append(item)
     return matches
 
@@ -340,6 +400,7 @@ def format_items_for_prompt(
     max_chars: int = _PROMPT_MAX_CHARS,
     excerpt_chars: int = _EXCERPT_CHARS,
     per_feed_cap: int = _PER_FEED_CAP,
+    min_body_chars: int = _MIN_PACK_BODY_CHARS,
 ) -> str:
     """Serialize feed items into a context block, fairly sampled across feeds."""
     capped = cap_per_feed(items, per_feed_cap)
@@ -356,7 +417,14 @@ def format_items_for_prompt(
     total = 0
     for item in ordered:
         published = item.published.isoformat() if item.published else "unknown"
-        text = item.full_text or item.summary
+        text = (item.full_text or item.summary or "").strip()
+        if min_body_chars and len(text) < min_body_chars:
+            logger.info(
+                "Skipping thin RSS item (no article body): %s (%s)",
+                item.title,
+                item.url,
+            )
+            continue
         truncated = len(text) > excerpt_chars
         if truncated:
             text = text[:excerpt_chars].rstrip() + "..."

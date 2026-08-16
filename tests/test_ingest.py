@@ -12,6 +12,7 @@ from owly.ingest import (
     format_items_for_prompt,
     items_for_ticker,
     round_robin_by_feed,
+    _is_consent_wall,
 )
 
 
@@ -56,13 +57,28 @@ class IngestPackTest(unittest.TestCase):
         self.assertEqual(order, ["Ars", "Verge", "Ars"])
 
     def test_format_mentions_also_covered_by(self) -> None:
+        body = "long article paragraph " * 30
         items = [
-            _item("Same chip story", "https://ars.example/1", "Ars", "long " * 20),
-            _item("Same chip story", "https://verge.example/1", "Verge", "long " * 20),
+            _item("Same chip story", "https://ars.example/1", "Ars", body),
+            _item("Same chip story", "https://verge.example/1", "Verge", body),
         ]
         packed = format_items_for_prompt(items, max_chars=20000)
         self.assertIn("Also covered by: Verge", packed)
         self.assertIn("https://ars.example/1", packed)
+
+    def test_format_skips_thin_bodies(self) -> None:
+        items = [
+            _item("Headline only", "https://tweakers.example/1", "Tweakers", "Kort."),
+            _item(
+                "Full story",
+                "https://ars.example/1",
+                "Ars",
+                "A complete article body with enough text for a digest rewrite. " * 8,
+            ),
+        ]
+        packed = format_items_for_prompt(items)
+        self.assertNotIn("Headline only", packed)
+        self.assertIn("Full story", packed)
 
     def test_items_for_ticker(self) -> None:
         items = [
@@ -72,6 +88,42 @@ class IngestPackTest(unittest.TestCase):
         matches = items_for_ticker(items, "nvda")
         self.assertEqual(len(matches), 1)
         self.assertEqual(matches[0].title, "NVDA earnings")
+
+    def test_items_for_ticker_ignores_substring(self) -> None:
+        items = [
+            _item("Windows must update", "https://a.example/1", "Ars", "Community must wait for Microsoft."),
+            _item("Memory rally", "https://a.example/2", "Ars", "Micron raised guidance as $MU ripped higher."),
+            _item("Lemonade expands", "https://a.example/3", "Ars", "Lemonade launched in a new state."),
+        ]
+        mu = items_for_ticker(items, "MU", "Micron")
+        self.assertEqual([item.title for item in mu], ["Memory rally"])
+        lmnd = items_for_ticker(items, "LMND", "Lemonade")
+        self.assertEqual([item.title for item in lmnd], ["Lemonade expands"])
+
+    def test_consent_wall_detection(self) -> None:
+        self.assertTrue(
+            _is_consent_wall(
+                "https://myprivacy.dpgmedia.nl/consent?siteKey=abc&callbackUrl=https://tweakers.net/x"
+            )
+        )
+        self.assertTrue(
+            _is_consent_wall(
+                "https://tweakers.net/privacygate-confirm?redirectUri=%2Fnieuws%2F1.html"
+            )
+        )
+        self.assertTrue(
+            _is_consent_wall(
+                "https://tweakers.net/nieuws/1.html",
+                "<html><form action='https://myprivacy.dpgmedia.nl/consent?siteKey=abc&callbackUrl=https://tweakers.net/x'></form></html>",
+            )
+        )
+        self.assertFalse(
+            _is_consent_wall(
+                "https://tweakers.net/nieuws/251032/spacex.html",
+                "<html><p>SpaceX launched two rockets.</p><a href='https://myprivacy.dpgmedia.nl/privacy'>privacy</a></html>",
+            )
+        )
+        self.assertFalse(_is_consent_wall("https://arstechnica.com/science/2026/08/wildfire/"))
 
 
 if __name__ == "__main__":

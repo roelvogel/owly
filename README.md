@@ -4,7 +4,7 @@
 
 Owly is a personal news digest for people who want to stay sharp on **tech**, **stocks**, or a niche they actually care about — without opening social media or living on their phone.
 
-You name the beat. Owly gathers it from RSS and live X, Grok keeps only the signal, and you get a clean Markdown edition — twice a day, then you’re done. Read it on an e-ink tablet. Close the app. Get on with your life.
+You name the beat. Owly gathers it from RSS and live X, a Cursor agent keeps only the signal, and you get a clean Markdown edition — twice a day, then you’re done. Read it on an e-ink tablet. Close the app. Get on with your life.
 
 **[github.com/roelvogel/owly](https://github.com/roelvogel/owly)** · **Tablet app:** [Owly Android](https://github.com/roelvogel/owly-android)
 
@@ -39,12 +39,12 @@ Built for people who want **specificity**, not another timeline.
 | **Main digest** | 6–12 rewritten articles from your RSS feeds, grounded X posts, and a headline TOC |
 | **Stocks** *(optional)* | Per-ticker signal from X plus matching RSS (up to a paragraph per item) — configured locally, never shipped in the repo |
 
-Under the hood: full-text RSS (not just headlines), live X search via Grok’s `x_search`, web search to ground social-only stories, SQLite dedupe so published items don’t sneak back in, and a local dashboard to manage sources and trigger runs.
+Under the hood: full-text RSS (not just headlines), live X search via xAI `x_search`, Cursor-agent curation, SQLite dedupe so published items don’t sneak back in, and a local dashboard to manage sources and trigger runs.
 
 ## How it works
 
 ```
-Your feeds & topics  →  Grok curation  →  Markdown digest
+Your feeds & topics  →  xAI X-search + Cursor write  →  Markdown digest
                               ↓
                      Read on e-ink / tablet
 ```
@@ -53,14 +53,15 @@ Schedule it (e.g. 07:00 and 21:00) or hit **Run** when you want. Pair with the [
 
 ## Quick start
 
-**Requirements:** Python 3.11+ and an [xAI API key](https://console.x.ai).
+**Requirements:** Python 3.11+, Node.js 22+, an [xAI API key](https://console.x.ai), and a [Cursor API key](https://cursor.com/dashboard/api).
 
 ```powershell
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 pip install -r requirements.txt
 copy .env.example .env
-# Edit .env → set XAI_API_KEY
+# Edit .env → set XAI_API_KEY and CURSOR_API_KEY
+npm install                         # Cursor writer (Node 22+)
 ```
 
 ```powershell
@@ -72,14 +73,19 @@ python -m owly.dashboard            # open http://localhost:8741
 
 Add RSS feeds, topics, and (optionally) stock tickers in the dashboard. Your watchlist and digests stay on your machine.
 
+Curation uses a **local Cursor agent** (your Cursor plan). Live X posts are collected with xAI `x_search` only — Grok does not write the edition. You need Node.js 22+ on PATH for the writer, plus `CURSOR_API_KEY` and `XAI_API_KEY`.
+
 ## Configuration
 
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `XAI_API_KEY` | — | xAI API key |
-| `XAI_MODEL` | `grok-4.6` | Model name |
-| `MAX_OUTPUT_TOKENS` | `4096` | Token cap for stock / default Grok calls |
-| `MAX_MAIN_OUTPUT_TOKENS` | `16384` | Token cap for the main digest |
+| `XAI_MODEL` | `grok-4.6` | Model used for X search collect calls |
+| `XAI_SEARCH_MAX_TOKENS` | `2500` | Token cap for X collect (not article writing) |
+| `CURSOR_API_KEY` | — | Cursor API key for writing/curation |
+| `CURSOR_MODEL` | `composer-2.5` | Cursor agent model |
+| `MAX_OUTPUT_TOKENS` | `4096` | Unused by search; kept for compatibility |
+| `MAX_MAIN_OUTPUT_TOKENS` | `16384` | Unused by search; kept for compatibility |
 | `OUTPUT_DIR` | `editions` | Where digests are written |
 | `INGESTION_HOURS` | `12` | Lookback for RSS and X |
 | `STOCK_MAX_WORKERS` | `3` | Parallel stock digest calls |
@@ -124,10 +130,11 @@ No default stock watchlist. Your portfolio and niches stay yours.
 
 ```
 owly/
-  config.py · db.py · ingest.py · grok.py · render.py
+  config.py · db.py · ingest.py · grok.py · writer.py · render.py
   run.py · run_state.py · dashboard.py · api.py
   templates/ · static/
-scripts/register_tasks.ps1
+scripts/cursor_write.mjs · register_tasks.ps1
+package.json
 editions/   # gitignored
 data/       # gitignored
 ```

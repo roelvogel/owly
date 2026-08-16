@@ -25,8 +25,13 @@ class Settings(BaseSettings):
 
     max_output_tokens: int = 4096
     max_main_output_tokens: int = 16384
+    xai_search_max_tokens: int = 2500
     ingestion_hours: int = 12
     stock_max_workers: int = 3
+
+    cursor_api_key: str = ""
+    cursor_model: str = "composer-2.5"
+    cursor_timeout_seconds: int = 600
 
     # 0.0.0.0 is required for Tailscale / LAN tablet access; use 127.0.0.1 for local-only.
     dashboard_host: str = "0.0.0.0"

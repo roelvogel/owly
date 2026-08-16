@@ -12,4 +12,5 @@ stocks.local.json
 *.db
 .pytest_cache/
 .mypy_cache/
+node_modules/
 desktop.ini

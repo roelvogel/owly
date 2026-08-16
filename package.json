@@ -1,0 +1,9 @@
+{
+  "name": "owly-cursor-writer",
+  "private": true,
+  "type": "module",
+  "description": "Local Cursor agent used by Owly to write/curate editions",
+  "dependencies": {
+    "@cursor/sdk": "^1.0.28"
+  }
+}

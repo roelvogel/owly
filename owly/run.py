@@ -74,10 +74,15 @@ def _stock_digest_for_source(
     stock: Source,
     rss_items: list[FeedItem],
 ) -> tuple[StockDigestResult, int, int]:
-    matches = items_for_ticker(rss_items, stock.value)
+    matches = items_for_ticker(rss_items, stock.value, stock.label or "")
     rss_context = ""
     if matches:
-        rss_context = format_items_for_prompt(matches, max_chars=12000, excerpt_chars=2000)
+        rss_context = format_items_for_prompt(
+            matches,
+            max_chars=12000,
+            excerpt_chars=2000,
+            min_body_chars=0,
+        )
         logger.info("Stock %s: %d matching RSS items", stock.value, len(matches))
     return grok.generate_stock_digest(
         stock.value,
@@ -111,7 +116,7 @@ def run_edition(edition_slot: str | None = None, dry_run: bool = False) -> int:
             stock_sources = list_sources(conn, source_type="stock", enabled_only=True)
 
         if dry_run:
-            logger.info("Dry run: skipping Grok API calls (%d RSS items)", len(rss_items))
+            logger.info("Dry run: skipping xAI search and Cursor writing (%d RSS items)", len(rss_items))
             with get_db() as conn:
                 finish_run(
                     conn,

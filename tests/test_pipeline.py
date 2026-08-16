@@ -500,34 +500,86 @@ Related articles:
         deduped = dedupe_digest_items(digest)
         self.assertEqual(len(deduped.items), 1)
 
-    def test_main_digest_prompt_asks_for_rewrite_and_topic_mix(self) -> None:
+    def test_topic_collect_prompt_is_search_only(self) -> None:
         client = GrokClient.__new__(GrokClient)
         client.settings = self.settings
-        client._call_structured = Mock(
-            return_value=(
-                DigestResult(
-                    items=[
-                        DigestItem(
-                            title="T",
-                            summary="S" * 50,
-                            sources=["https://example.com/a"],
-                        )
-                    ]
-                ),
-                1,
-                1,
-            )
+        prompt = client.collect_topic_posts_prompt(["AI agents", "chips"])
+        self.assertIn("x_search", prompt)
+        self.assertIn("Do NOT write articles", prompt)
+        self.assertNotIn("Use web_search", prompt)
+        broad = client.collect_topic_posts_prompt(["AI agents", "chips"], broad=True)
+        self.assertIn("the latest posts", broad)
+
+    def test_main_digest_collects_x_then_writes(self) -> None:
+        client = GrokClient.__new__(GrokClient)
+        client.settings = self.settings
+        client.collect_topic_posts = Mock(
+            return_value=("- https://x.com/example/status/1 about agents\n", 10, 5)
         )
-        client.generate_main_digest("RSS HERE", ["AI agents", "chips"])
-        args, kwargs = client._call_structured.call_args
-        prompt = args[0]
-        self.assertIn("6-12", prompt)
-        self.assertIn("rewrite", prompt.lower())
-        self.assertIn("at least one item per topic", prompt)
-        self.assertIn("last 12 hours", prompt)
-        tool_types = {tool["type"] for tool in kwargs["tools"]}
-        self.assertEqual(tool_types, {"x_search", "web_search"})
-        self.assertEqual(kwargs["max_output_tokens"], 16384)
+        writer = Mock()
+        writer.write_main_digest.return_value = (
+            DigestResult(
+                items=[
+                    DigestItem(
+                        title="T",
+                        summary="S" * 50,
+                        sources=["https://example.com/a"],
+                    )
+                ]
+            ),
+            20,
+            30,
+        )
+        client._get_writer = Mock(return_value=writer)
+
+        result, in_tok, out_tok = client.generate_main_digest("RSS HERE", ["AI agents", "chips"])
+
+        client.collect_topic_posts.assert_called_once_with(["AI agents", "chips"])
+        writer.write_main_digest.assert_called_once()
+        args = writer.write_main_digest.call_args[0]
+        self.assertEqual(args[0], "RSS HERE")
+        self.assertEqual(args[1], ["AI agents", "chips"])
+        self.assertIn("x.com/example/status/1", args[2])
+        self.assertEqual(len(result.items), 1)
+        self.assertEqual(in_tok, 30)
+        self.assertEqual(out_tok, 35)
+
+    def test_main_digest_retries_broad_x_collect(self) -> None:
+        client = GrokClient.__new__(GrokClient)
+        client.settings = self.settings
+        client.collect_topic_posts = Mock(
+            side_effect=[
+                ("No posts found this window.", 10, 5),
+                ("- https://x.com/example/status/9 agents on the loose\n", 12, 6),
+            ]
+        )
+        writer = Mock()
+        writer.write_main_digest.return_value = (
+            DigestResult(
+                items=[
+                    DigestItem(
+                        title="T",
+                        summary="S" * 50,
+                        sources=["https://x.com/example/status/9"],
+                    )
+                ]
+            ),
+            20,
+            30,
+        )
+        client._get_writer = Mock(return_value=writer)
+
+        result, in_tok, out_tok = client.generate_main_digest("RSS HERE", ["AI agents"])
+
+        self.assertEqual(client.collect_topic_posts.call_count, 2)
+        client.collect_topic_posts.assert_any_call(["AI agents"])
+        client.collect_topic_posts.assert_any_call(["AI agents"], broad=True)
+        args = writer.write_main_digest.call_args[0]
+        self.assertIn("x.com/example/status/9", args[2])
+        self.assertIn("broader X search", args[3])
+        self.assertEqual(len(result.items), 1)
+        self.assertEqual(in_tok, 42)
+        self.assertEqual(out_tok, 41)
 
     def test_stock_placeholder_keeps_guidance_with_no_significant(self) -> None:
         client = GrokClient.__new__(GrokClient)
